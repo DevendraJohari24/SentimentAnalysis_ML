@@ -1,180 +1,661 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # SENTIMENT ANALYSIS
-
 # ## Importing Libraries
 
-# In[47]:
+# In[448]:
 
 
-import re
-from sklearn.feature_extraction.text import CountVectorizer
+import pandas as pd
+import numpy as np
+import glob, os, string, re, spacy
+from nltk.stem import WordNetLemmatizer
+from nltk.corpus import stopwords 
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import classification_report, accuracy_score
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.svm import LinearSVC
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.metrics import precision_score, recall_score
+from sklearn.metrics import confusion_matrix
+from sklearn.metrics import f1_score
+from sklearn.tree import export_graphviz
+import six
+from IPython.display import Image  
+import pydotplus
+
+
+# ## Import Datasets
 
+# In[364]:
 
-# In[48]:
 
+train_pos_files = glob.glob("aclImdb/train/pos/*.txt")
+train_neg_files = glob.glob("aclImdb/train/neg/*.txt")
+train_pos_ls = []
 
-REPLACE = re.compile("(\.)|(\;)|(\:)|(\!)|(\')|(\?)|(\,)|(\")|(\()|(\))|(\[)|(\])")
-REPLACE_SPACE = re.compile("(<br\s*/><br\s*/>)|(\-)|(\/)")
+for i in train_pos_files:
+    file = open(i, "r", encoding="utf8")
+    str = file.readline()
+    clean = re.compile('<.*?>')
+    str = re.sub(clean, ' ', str)
+    train_pos_ls.append(str)
+    
+train_neg_ls = []
+for i in train_neg_files:
+    file = open(i, "r", encoding="utf8")
+    str = file.readline()
+    clean = re.compile('<.*?>')
+    str = re.sub(clean, ' ', str)
+    train_neg_ls.append(str)
 
 
-# ## Load Dataset
+# In[365]:
 
-# ### Training Set
 
-# In[49]:
+labels = ['reveiw', 'label']
+df_train_pos = pd.DataFrame()
+df_train_pos['review'] = train_pos_ls
+df_train_pos['label'] = 1
+df_train_neg = pd.DataFrame()
+df_train_neg['review'] = train_neg_ls
+df_train_neg['label'] = -1
+df_train = pd.concat([df_train_pos , df_train_neg])
+df_train.head(10)
 
 
-training_set = []
-for line in open('data/movie_data/full_train.txt', 'r', encoding = "utf8"):
-	training_set.append(line.strip())
-print(training_set[0:10])
+# In[366]:
 
 
-# In[50]:
+test_pos_files = glob.glob("aclImdb/test/pos/*.txt")
+test_neg_files = glob.glob("aclImdb/test/neg/*.txt")
+test_pos_ls = []
+for i in test_pos_files:
+    file = open(i, "r",encoding="utf8")
+    str = file.readline()
+    clean = re.compile('<.*?>')
+    str = re.sub(clean, ' ', str)
+    test_pos_ls.append(str)
+    
+test_neg_ls = []
+for i in test_neg_files:
+    file = open(i, "r",encoding="utf8")
+    str = file.readline()
+    clean = re.compile('<.*?>')
+    str = re.sub(clean, ' ', str)
+    test_neg_ls.append(str)
 
 
-testing_set = []
-for line in open('data/movie_data/full_test.txt', 'r', encoding = "utf8"):
-	testing_set.append(line.strip())
-print(testing_set[0:10])
+# In[367]:
 
 
-# ## Data Cleaning
+labels = ['reveiw', 'label']
+df_test_pos = pd.DataFrame()
+df_test_pos['review'] = test_pos_ls
+df_test_pos['label'] = 1
+df_test_neg = pd.DataFrame()
+df_test_neg['review'] = test_neg_ls
+df_test_neg['label'] = -1
+df_test = pd.concat([df_test_pos , df_test_neg])
+df_test.head(10)
 
-# ### Training Set Cleaning 
 
-# In[51]:
+# In[368]:
 
 
-training_set = [REPLACE.sub("", line.lower()) for line in training_set]
-training_set = [REPLACE_SPACE.sub(" ", line) for line in training_set]
+# Define text pre-processing functions
+lemma = WordNetLemmatizer()
+stops = set(stopwords.words('english'))
+            
+def text_prep(text):
+    no_punct = [char for char in text if char not in string.punctuation]
+    text = "".join(no_punct)
+    text = [lemma.lemmatize(text, pos='v') for text in text.lower().split() if text not in stops] 
+    text = " ".join(text)
+    return (text)
 
 
-# ### Testing Set Cleaning
+# ## Data Preprocessing
 
-# In[52]:
+# In[369]:
 
 
-testing_set = [REPLACE.sub("", line.lower()) for line in testing_set]
-testing_set = [REPLACE_SPACE.sub(" ", line) for line in testing_set]
+# preprocess training data
+df_train['prep_review'] = df_train['review'].apply(lambda x:text_prep(x))
+df_train[['prep_review', 'label']].head(10)
 
 
-# ## Train Model
+# In[370]:
 
-# ### Count Vectorizer Model
 
-# In[53]:
+# preprocess testing data
+df_test['prep_review'] = df_test['review'].apply(lambda x:text_prep(x))
+df_test[['prep_review', 'label']].head(10)
 
 
-cv = CountVectorizer(binary=True)
-cv.fit(training_set)
-X = cv.transform(training_set)
-X_test = cv.transform(testing_set)
-target = [1 if i < 12500 else 0 for i in range(25000)]
+# In[461]:
 
 
-# ## Splitting Data
+# Vectorizing training data 
+tfidf = TfidfVectorizer()
+# tfidf = TfidfVectorizer(ngram_range = (1,3)) did not improve accuracy
+x_train = tfidf.fit_transform(df_train['prep_review'])
+y_train = df_train['label']
 
-# In[54]:
 
+# In[462]:
 
-x_train, x_test , y_train, y_test = train_test_split(X, target, train_size = 0.75)
 
+# Vectorizing testing data 
+x_test = tfidf.transform(df_test['prep_review'])
+y_test = df_test['label']
 
-# ### Logistic Regression Model
 
-# ## Calculating Accuracy_Score
+# ## Training Model
 
-# In[55]:
+# ### 1. Multinomial Naive Bayes
 
+# In[463]:
 
-score = 0
-for c in [0.01, 0.05, 0.25, 0.50, 0.75, 1.00]:
-	lr = LogisticRegression(C=c,max_iter=100000)
-	lr.fit(x_train, y_train)
-	print ("Accuracy for C=%s: %s" 
-	       % (c, accuracy_score(y_test, lr.predict(x_test))))
-	if(score < accuracy_score(y_test, lr.predict(x_test))):
-	    score = accuracy_score(y_test, lr.predict(x_test))
 
+mnb = MultinomialNB()
 
-# In[56]:
 
+# In[464]:
 
-output_model = LogisticRegression(C=score, max_iter=10000)
-output_model.fit(X, target)
 
+mnb.fit(x_train, y_train)
 
-# ## Output Model Accuracy 
 
-# In[57]:
+# In[375]:
 
 
-accuracy = accuracy_score(target, output_model.predict(X_test))
-percentage_accuracy = accuracy*100.00
-print("Output Model Accuracy : %0.2f" % percentage_accuracy + "%")
+y_pred = mnb.predict(x_test)
 
 
-# ## Examples
+# In[376]:
 
-# In[58]:
 
+print(y_pred)
 
-feature_to_coef = {
-    word: coef for word, coef in zip(
-        cv.get_feature_names(), output_model.coef_[0]
-    )
-}
 
+# In[377]:
 
-# In[59]:
 
+accuracy = float(accuracy_score(y_test, y_pred))
 
-print("Example of Positive words and it's Weightage")
-for positive in sorted(
-	feature_to_coef.items(), 
-	key=lambda x: x[1], 
-	reverse=True)[:5]:
-	print (positive)
 
+# In[378]:
 
-# In[60]:
 
+print("Accuracy Percentage of Multinomial Naive Bayes Model : %0.2f" % (accuracy*100) + '%')
 
-print("Example of Negative words and it's Weightage")
-for negative in sorted(
-	feature_to_coef.items(), 
-	key=lambda x: x[1])[:5]:
-	print (negative)
 
+# In[379]:
 
-# ## Test Human Generated Preview 
 
-# In[ ]:
+cm = confusion_matrix(y_train, y_pred)
 
 
-predictions = output_model.predict(cv.transform([input("Enter Your Own Review :")]))[0]
-if(predictions == 0):
+# In[380]:
+
+
+print("Confusion Matrix of Multinomial Naive Bayes Model -:")
+print("True Negatives are : %d" % cm[0][0])
+print("False Positives are : %d" % cm[0][1])
+print("False Negatives are : %d" % cm[1][0])
+print("True Positives are : %d" % cm[1][1])
+
+
+# In[381]:
+
+
+precision = float(precision_score(y_train, y_pred))
+
+
+# In[382]:
+
+
+print("Precision Percentage of Multinomial Naive Bayes Model : %0.2f" % (precision*100) + '%')
+
+
+# In[383]:
+
+
+rs = recall_score(y_train, y_pred)
+
+
+# In[384]:
+
+
+print("Recall Score Percentage of Multinomial Naive Bayes Model : %0.2f" % (rs*100) + '%')
+
+
+# In[385]:
+
+
+fs = f1_score(y_train, y_pred)
+
+
+# In[386]:
+
+
+print("F1 Score of Multinomial Naive Bayes Model : %0.2f" % (fs))
+
+
+# ### 2. Random Forest Classifier
+
+# In[387]:
+
+
+rfc = RandomForestClassifier(n_estimators=100, random_state = 42, n_jobs = -1)
+
+
+# In[388]:
+
+
+rfc.fit(x_train, y_train)
+
+
+# In[389]:
+
+
+y_pred = rfc.predict(x_test)
+
+
+# In[390]:
+
+
+rfc.score(x_train, y_train)
+
+
+# In[391]:
+
+
+print(y_pred)
+
+
+# In[392]:
+
+
+accuracy = float(accuracy_score(y_test, y_pred))
+
+
+# In[393]:
+
+
+print("Accuracy Percentage of RandomForest Classifier Model : %0.2f" % (accuracy*100) + '%')
+
+
+# In[394]:
+
+
+cm = confusion_matrix(y_train, y_pred)
+
+
+# In[395]:
+
+
+print("Confusion Matrix of RandomForest Classifier Model -:")
+print("True Negatives are : %d" % cm[0][0])
+print("False Positives are : %d" % cm[0][1])
+print("False Negatives are : %d" % cm[1][0])
+print("True Positives are : %d" % cm[1][1])
+
+
+# In[396]:
+
+
+precision = float(precision_score(y_train, y_pred))
+
+
+# In[397]:
+
+
+print("Precision Percentage of RandomForest Classifier Model : %0.2f" % (precision*100) + '%')
+
+
+# In[398]:
+
+
+rs = recall_score(y_train, y_pred)
+
+
+# In[399]:
+
+
+print("Recall Score Percentage of RandomForest Classifier Model : %0.2f" % (rs*100) + '%')
+
+
+# In[400]:
+
+
+fs = f1_score(y_train, y_pred)
+
+
+# In[401]:
+
+
+print("F1 Score of RandomForest Classifier Model : %0.2f" % (fs))
+
+
+# ### 3. Logistic Regression
+
+# In[402]:
+
+
+lr = LogisticRegression(solver = 'lbfgs', n_jobs = -1)
+
+
+# In[403]:
+
+
+lr.fit(x_train, y_train)
+
+
+# In[404]:
+
+
+y_pred = lr.predict(x_test)
+
+
+# In[473]:
+
+
+print(y_pred)
+
+
+# In[475]:
+
+
+lr.score(x_train, y_train)
+
+
+# In[476]:
+
+
+accuracy = float(accuracy_score(y_test, y_pred))
+
+
+# In[408]:
+
+
+print("Accuracy Percentage of LogisticRegression Model : %0.2f" % (accuracy*100) + '%')
+
+
+# In[409]:
+
+
+cm = confusion_matrix(y_train, y_pred)
+
+
+# In[410]:
+
+
+print("Confusion Matrix of LogisticRegression Model -:")
+print("True Negatives are : %d" % cm[0][0])
+print("False Positives are : %d" % cm[0][1])
+print("False Negatives are : %d" % cm[1][0])
+print("True Positives are : %d" % cm[1][1])
+
+
+# In[411]:
+
+
+precision = float(precision_score(y_train, y_pred))
+
+
+# In[412]:
+
+
+print("Precision Percentage of LogisticRegression Model : %0.2f" % (precision*100) + '%')
+
+
+# In[413]:
+
+
+rs = recall_score(y_train, y_pred)
+
+
+# In[414]:
+
+
+print("Recall Score Percentage of LogisticRegression Model : %0.2f" % (rs*100) + '%')
+
+
+# In[415]:
+
+
+fs = f1_score(y_train, y_pred)
+
+
+# In[416]:
+
+
+print("F1 Score of LogisticRegression Model : %0.2f" % (fs))
+
+
+# ### 4. Linear Support Vector Classifier
+
+# In[417]:
+
+
+lsvm = LinearSVC()
+
+
+# In[418]:
+
+
+lsvm.fit(x_train, y_train)
+
+
+# In[419]:
+
+
+y_pred = lsvm.predict(x_test)
+
+
+# In[420]:
+
+
+print(y_pred)
+
+
+# In[421]:
+
+
+lsvm.score(x_train, y_train)
+
+
+# In[422]:
+
+
+accuracy = float(accuracy_score(y_test, y_pred))
+
+
+# In[423]:
+
+
+print("Accuracy Percentage of Linear Support Vector Classifier Model : %0.2f" % (accuracy*100) + '%')
+
+
+# In[424]:
+
+
+cm = confusion_matrix(y_train, y_pred)
+
+
+# In[425]:
+
+
+print("Confusion Matrix of Linear Support Vector Classifier Model -:")
+print("True Negatives are : %d" % cm[0][0])
+print("False Positives are : %d" % cm[0][1])
+print("False Negatives are : %d" % cm[1][0])
+print("True Positives are : %d" % cm[1][1])
+
+
+# In[426]:
+
+
+precision = float(precision_score(y_train, y_pred))
+
+
+# In[427]:
+
+
+print("Precision Percentage of Linear Support Vector Classifier Model : %0.2f" % (precision*100) + '%')
+
+
+# In[428]:
+
+
+rs = recall_score(y_train, y_pred)
+
+
+# In[429]:
+
+
+print("Recall Score Percentage of Linear Support Vector Classifier Model : %0.2f" % (rs*100) + '%')
+
+
+# In[430]:
+
+
+fs = f1_score(y_train, y_pred)
+
+
+# In[431]:
+
+
+print("F1 Score of Linear Support Vector Classifier Model : %0.2f" % (fs))
+
+
+# ### 5. Decision Tree Classifier
+
+# In[432]:
+
+
+dtc = DecisionTreeClassifier(random_state=0)
+
+
+# In[433]:
+
+
+dtc.fit(x_train,y_train)
+
+
+# In[434]:
+
+
+y_pred = dtc.predict(x_test)
+
+
+# In[435]:
+
+
+print(y_pred)
+
+
+# In[436]:
+
+
+dtc.score(x_train, y_train)
+
+
+# In[437]:
+
+
+accuracy = float(accuracy_score(y_test, y_pred))
+
+
+# In[438]:
+
+
+print("Accuracy Percentage of Decision Tree Classifier Model : %0.2f" % (accuracy*100) + '%')
+
+
+# In[439]:
+
+
+cm = confusion_matrix(y_train, y_pred)
+
+
+# In[440]:
+
+
+print("Confusion Matrix of Decision Tree Classifier Model -:")
+print("True Negatives are : %d" % cm[0][0])
+print("False Positives are : %d" % cm[0][1])
+print("False Negatives are : %d" % cm[1][0])
+print("True Positives are : %d" % cm[1][1])
+
+
+# In[441]:
+
+
+precision = float(precision_score(y_train, y_pred))
+
+
+# In[442]:
+
+
+print("Precision Percentage of Decision Tree Classifier Model : %0.2f" % (precision*100) + '%')
+
+
+# In[443]:
+
+
+rs = recall_score(y_train, y_pred)
+
+
+# In[444]:
+
+
+print("Recall Score Percentage of Decision Tree Classifier Model : %0.2f" % (rs*100) + '%')
+
+
+# In[445]:
+
+
+fs = f1_score(y_train, y_pred)
+
+
+# In[446]:
+
+
+print("F1 Score of Decision Tree Classifier Model : %0.2f" % (fs))
+
+
+# In[490]:
+
+
+choice = int(input("Which Model You want to test by your Own Review?....\n1.Multinomial Naive Bayes\n2.Random Forest Classifier\n3.Logistic Regression\n4.Linear Support Vector Classifier\n5.Decision Tree Classifier\nEnter Choice..."))
+
+
+# In[491]:
+
+
+if choice == 1:
+    predictions = mnb.predict(tfidf.transform([input("Enter Your Own Review :")]))[0]
+elif choice == 2:
+    predictions = rfc.predict(tfidf.transform([input("Enter Your Own Review :")]))[0]
+elif choice == 3:
+    predictions = lr.predict(tfidf.transform([input("Enter Your Own Review :")]))[0]
+elif choice == 4:
+    predictions = lsvm.predict(tfidf.transform([input("Enter Your Own Review :")]))[0]
+elif choice == 5:
+    predictions = dtc.predict(tfidf.transform([input("Enter Your Own Review :")]))[0]
+
+
+if(predictions == -1):
 	print("Negative Review!(-)")
 else:
 	print("Positive Review!(+)")
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
 
 
 # In[ ]:
